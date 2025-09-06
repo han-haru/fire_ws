@@ -1,0 +1,7 @@
+/imx219_cam:
+  ros__parameters:
+    # compressed 이미지 트랜스포트 파라미터 (플러그인)
+    image_raw:
+      compressed:
+        jpeg_quality: 60     # 1~100 (기본 95). 60~70면 대역폭 크게 절감
+        color_format: yuv422 # 옵션: yuv422/rgb8; 기본은 yuv422
