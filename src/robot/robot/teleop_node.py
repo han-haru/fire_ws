@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os, sys, tty, termios, select
 import rclpy
 from rclpy.node import Node
@@ -5,37 +6,33 @@ from std_msgs.msg import Float32, String
 
 HELP = """
 === Control Keys ===
-Blade: w=+10%, s=-10%, a=reverse, d=OFF(0%)
+Blade: w=+10%, s=-10%, a=reverse, d=toggle ON/OFF
 Arm:   i=up, k=down, space=stop, l=release
-       o=arm speed UP (+100Hz), p=arm speed DOWN (-100Hz)
-Pump:  u=정방향, j=역방향, m=stop
+       u=RPM +10,  o=RPM -10   (현재 RPM은 콘솔에 표시)
+Pump:  y=정방향, j=역방향, m=stop   (※ u 키와 충돌 피해서 y로 변경)
 Exit:  q
 ====================
 """
 
+# ARM 기어 파라미터를 teleop에서 몰라도 되지만,
+# 콘솔에 참고로 현재 rpm만 찍어준다 (Hz 환산은 ArmNode에서 처리)
 class TeleopNode(Node):
     def __init__(self):
         super().__init__('teleop_node')
         self.pub_blade = self.create_publisher(Float32, '/blade/cmd', 10)
+        self.pub_bctrl = self.create_publisher(String,  '/blade/ctrl', 10)
         self.pub_arm   = self.create_publisher(String,  '/arm/cmd',   10)
         self.pub_pump  = self.create_publisher(String,  '/pump/cmd',  10)
 
-        # Blade
+        # Blade 속도 %
         self.percent = 0.0
-        # Arm speed (Hz 단위)
-        self.arm_speed = 400  
-
-        # Arm 파라미터 (ArmNode와 동일하게 맞춰줌)
-        self.declare_parameter('microstep', 8)     # 기본 8분할
-        self.declare_parameter('step_angle', 1.8)  # 기본 1.8도 스텝모터
-        self.microstep = int(self.get_parameter('microstep').get_parameter_value().integer_value)
-        self.step_angle = float(self.get_parameter('step_angle').get_parameter_value().double_value)
+        # ARM RPM (ArmNode 기본 400Hz ≈ 120 rpm @1.8°,1x 기준)
+        self.arm_rpm = 30.0
 
         print(HELP)
-
-    def hz_to_rpm(self, hz: float) -> float:
-        steps_per_rev = (360.0 / self.step_angle) * self.microstep
-        return hz * 60.0 / steps_per_rev
+        print(f"[Arm] init rpm = {self.arm_rpm:.1f} rpm")
+        # 시작 시 현재 rpm을 ArmNode에 알려두고 시작 (선택)
+        self.pub_arm.publish(String(data=f"rpm:{self.arm_rpm:.1f}"))
 
     def _open_tty(self):
         if sys.stdin.isatty():
@@ -68,40 +65,49 @@ class TeleopNode(Node):
 
                 if ch == 'q':
                     break
+
+                # --- Blade ---
+                # 바꿀 부분만 발췌
                 elif ch == 'w':
-                    self.percent = min(self.percent + 10, 100)
-                    self.pub_blade.publish(Float32(data=self.percent))
+                    self.percent = min(float(self.percent) + 10.0, 100.0)
+                    self.pub_blade.publish(Float32(data=float(self.percent)))
                 elif ch == 's':
-                    self.percent = max(self.percent - 10, -100)
-                    self.pub_blade.publish(Float32(data=self.percent))
+                    self.percent = max(float(self.percent) - 10.0, -100.0)
+                    self.pub_blade.publish(Float32(data=float(self.percent)))
                 elif ch == 'a':
-                    self.percent = -self.percent
-                    self.pub_blade.publish(Float32(data=self.percent))
+                    self.pub_bctrl.publish(String(data="reverse"))
                 elif ch == 'd':
-                    self.percent = 0.0
-                    self.pub_blade.publish(Float32(data=0.0))
-                elif ch == 'i':  # Arm UP (현재 속도)
-                    self.pub_arm.publish(String(data=f"up:{self.arm_speed}"))
-                elif ch == 'k':  # Arm DOWN (현재 속도)
-                    self.pub_arm.publish(String(data=f"down:{self.arm_speed}"))
-                elif ch == ' ':  # Arm STOP
+                    self.pub_bctrl.publish(String(data="toggle"))
+                    self.get_logger().info(f"현재 속도: {self.percent}")
+
+                # --- Arm: 동작 ---
+                elif ch == 'i':
+                    self.pub_arm.publish(String(data="up"))
+                elif ch == 'k':
+                    self.pub_arm.publish(String(data="down"))
+                elif ch == ' ':
                     self.pub_arm.publish(String(data="stop"))
-                elif ch == 'l':  # Arm RELEASE
+                elif ch == 'l':
                     self.pub_arm.publish(String(data="release"))
-                elif ch == 'o':  # Arm speed up
-                    self.arm_speed += 100
-                    rpm = self.hz_to_rpm(self.arm_speed)
-                    print(f"[Arm] speed = {self.arm_speed} Hz ({rpm:.2f} rpm)")
-                elif ch == 'p':  # Arm speed down
-                    self.arm_speed = max(50, self.arm_speed - 100)
-                    rpm = self.hz_to_rpm(self.arm_speed)
-                    print(f"[Arm] speed = {self.arm_speed} Hz ({rpm:.2f} rpm)")
+
+                # --- Arm: RPM 조절 ---
                 elif ch == 'u':
+                    self.arm_rpm = min(self.arm_rpm + 10, 300)
+                    print(f"[Arm] rpm = {self.arm_rpm:.1f}")
+                    self.pub_arm.publish(String(data=f"rpm:{self.arm_rpm:.1f}"))
+                elif ch == 'o':
+                    self.arm_rpm = max(self.arm_rpm - 10, 10)
+                    print(f"[Arm] rpm = {self.arm_rpm:.1f}")
+                    self.pub_arm.publish(String(data=f"rpm:{self.arm_rpm:.1f}"))
+
+                # --- Pump (키 충돌 피해서 upright=y 로 변경) ---
+                elif ch == 'y':
                     self.pub_pump.publish(String(data="upright"))
-                elif ch == 'j':
+                elif ch == 'h':
                     self.pub_pump.publish(String(data="upside_down"))
-                elif ch == 'm':  # Pump STOP
+                elif ch == 'j':
                     self.pub_pump.publish(String(data="stop"))
+
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
             if extra_file is not None:
