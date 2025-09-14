@@ -18,7 +18,7 @@ class ArmNode(Node):
         self.declare_parameter('pulse_low_us', 20)
         self.declare_parameter('min_gap_us', 6)
         self.declare_parameter('microstep', 8)     # 마이크로스텝 설정
-        self.declare_parameter('step_angle', 1.8)  # ✅ 스텝 각도 (도/step)
+        self.declare_parameter('step_angle', 1.8)  # 스텝 각도 (도/step)
         # ────────────────────────────────────────────────────────
 
         chip = self.get_parameter('gpiochip').get_parameter_value().integer_value
